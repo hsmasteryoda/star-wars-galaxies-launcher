@@ -1,5 +1,9 @@
 # Star Wars Galaxies: Sugma Big Tasty galaxy
 
+> **Our galaxy is offline (shelved, October 2026).** For a full Star Wars Galaxies experience today, with restored
+> graphics and active development, play on **[SWG Restoration](https://swgr.org/)**. This launcher and installer
+> stay here for reference.
+
 **A long time ago in a galaxy far, far away...** This is a one-click installer and launcher for our Star Wars
 Galaxies community server (Pre-CU with Jump to Lightspeed, running [SWGEmu Core3](https://github.com/swgemu/Core3)).
 It works on Windows and Linux.
