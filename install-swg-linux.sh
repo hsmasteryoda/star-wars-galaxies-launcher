@@ -4,15 +4,18 @@
 # Files come from a "client-files" folder next to this script (offline, e.g. the USB stick), then your LAN mirror (if set),
 # then SWGEmu's own patch server. Nothing is bundled in the repo.
 #
-# usage: install-swg-linux.sh [--dest DIR] [--server HOST] [--mirror URL] [--no-desktop-icon] [--yes]
+# usage: install-swg-linux.sh [--dest DIR] [--server HOST] [--mirror URL] [--discs "SRC;SRC"] [--no-desktop-icon] [--yes]
 #   --dest     where to install (default: ask; ~/Games/swg is suggested)
 #   --server   login server address (default: SERVER= in swg-installer.conf next to this script)
 #   --mirror   LAN mirror base URL, e.g. http://host:8090 (default: MIRROR= in swg-installer.conf; optional)
+#   --discs    your original SWG discs, to copy the big game archives from instead of downloading them (about 2 GB of
+#              the 3): a folder with a copy of the discs, the discs' .iso files, or "cdrom" for the discs themselves
+#              (it asks for each disc in turn). Separate several with ";". Needs python3.
 #   --yes      don't ask anything (uses the defaults)
 # Re-running it on an existing install only fetches missing or damaged files ("repair").
 set -eu
 
-HERE=$(cd "$(dirname "$0")" && pwd); DEST=""; SERVER=""; MIRROR=""; DESKTOP_ICON=1; ASK=1
+HERE=$(cd "$(dirname "$0")" && pwd); DEST=""; SERVER=""; MIRROR=""; DISCS=""; DESKTOP_ICON=1; ASK=1
 SWGEMU=http://www.launchpad2.net/SWGEmu
 [ -f "$HERE/swg-installer.conf" ] && . "$HERE/swg-installer.conf"
 while [ $# -gt 0 ]; do
@@ -20,9 +23,10 @@ while [ $# -gt 0 ]; do
     --dest) DEST=$2; shift 2;;
     --server) SERVER=$2; shift 2;;
     --mirror) MIRROR=$2; shift 2;;
+    --discs) DISCS=$2; shift 2;;
     --no-desktop-icon) DESKTOP_ICON=0; shift;;
     --yes|-y) ASK=0; shift;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0;;
     *) echo "unknown option $1"; exit 1;;
   esac
 done
@@ -65,7 +69,8 @@ fi
 DEST=$(realpath -m "$DEST"); P="$DEST/pfx"; G="$P/drive_c/SWGEmu"
 mkdir -p "$G"
 free=$(df -Pk "$DEST" | awk 'NR==2 {print $4}')
-[ "$free" -gt 5242880 ] || die "Not enough space in $DEST: need 5 GB free, have $((free/1048576)) GB."
+need_gb=5; case ";${DISCS,,};" in *";cdrom;"*) need_gb=7;; esac   # the CDs' archives are copied to disk first
+[ "$free" -gt $((need_gb * 1048576)) ] || die "Not enough space in $DEST: need $need_gb GB free, have $((free/1048576)) GB."
 
 # 3. Wine: newest GE-Proton from Steam/Lutris if present (has DXVK), else the system wine
 GE=$(ls -d "$HOME"/.local/share/Steam/compatibilitytools.d/GE-Proton*/files "$HOME"/.steam/root/compatibilitytools.d/GE-Proton*/files \
@@ -90,6 +95,16 @@ fetch() {  # fetch <relative path> <dest file> [md5]: local copy, then LAN mirro
 LIST="$DEST/required2.txt"
 fetch required2.txt "$LIST" || die "Can't get the SWGEmu file list (no client-files folder, no internet, no LAN mirror)."
 tr -d '\r' < "$LIST" > "$LIST.tmp" && mv -f "$LIST.tmp" "$LIST"
+# 4a. the player's own discs (folder copy, .iso files or the CD drive): the big archives come from there
+if [ -n "$DISCS" ]; then
+  if command -v python3 >/dev/null; then
+    echo "Reading your Star Wars Galaxies discs..."
+    IFS=';' read -r -a disc_src <<< "$DISCS"
+    python3 -I "$HERE/launcher/swg_discs.py" --list "$LIST" --game "$G" --stage "$DEST/.disc-copy" "${disc_src[@]}" || true
+  else
+    echo "WARNING: python3 is needed to read the discs - downloading everything instead."
+  fi
+fi
 download_all() {
   local n=0 total bad=0 f size sum
   total=$(grep -c ';' "$LIST")

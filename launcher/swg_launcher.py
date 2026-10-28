@@ -201,12 +201,16 @@ def install_wizard():
         "title": "Star Wars Galaxies", "bg": "#0a1622", "fg": "#cde", "accent": "#f0b848", "btn_bg": "#13283a", "dim": "#8aa",
         "banner_h": 190, "banner": banner,
         "blurb": "A long time ago in a galaxy far, far away... This installs Star Wars Galaxies (about 4 GB) and connects it "
-                 "to our galaxy. New players make their own account and character the first time they log in.",
+                 "to our galaxy. New players make their own account and character the first time they log in.\n\n"
+                 "Got the original discs? Pick them under Game discs (a copied folder, the .iso files, or the CD drive) and "
+                 "about 2 GB of the game comes off them instead of the internet. Optional.",
         "fields": [("server", "Server address", CONF.get("SERVER", ""), "text"),
                    ("dest", "Install into", os.path.expanduser("~/Games/swg"), "folder"),
+                   ("discs", "Game discs", "", "discs"),
                    ("desktop", "Put a shortcut on the desktop", True, "check")],
         "script": os.path.join(repo, "install-swg-linux.sh"),
-        "args": lambda v: ["--yes", "--dest", os.path.expanduser(v["dest"]), "--server", v["server"]] + ([] if v["desktop"] else ["--no-desktop-icon"]),
+        "args": lambda v: ["--yes", "--dest", os.path.expanduser(v["dest"]), "--server", v["server"]] + ([] if v["desktop"] else ["--no-desktop-icon"])
+                          + (["--discs", v["discs"]] if v["discs"].strip() else []),
         "launch": lambda d: [sys.executable, os.path.join(d, "launcher", "swg_launcher.py")],
     })
 

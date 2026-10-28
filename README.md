@@ -12,6 +12,8 @@ It works on Windows and Linux.
   screens, all read from your own game files, plus Play, Settings and Controller buttons.
 - **No game files are in this repository.** The installer downloads the free SWGEmu client files from SWGEmu's own
   patch server and checks every file's MD5. A re-run repairs damaged or missing files.
+- **Got the original discs?** The installer can take about 2 GB of the game off them instead of downloading it: a
+  copied folder, the `.iso` files, or the discs in your CD drive (it asks for each disc in turn). Optional.
 - **Controller support:** see [`controller/README.md`](controller/README.md) (Steam Input or AntiMicroX).
 
 ## Install
@@ -40,6 +42,12 @@ Windows), so there is no pre-built program to trust.
 ## Good to know
 
 - This is a fan-run emulator server, not the original servers. Expect the occasional restart. The admins watch over it.
+- **Original discs:** the 2003 discs still hold 28 of the 74 files SWGEmu uses (all the big `.tre` archives). Pick
+  them under **Original discs** (Windows) or **Game discs** (Linux): **Folder** (a copy of the discs, or a folder
+  holding all three), **ISO files** (pick all three; read directly, nothing is mounted) or **CD drive** (it asks for
+  disc 1, 2 and 3 and opens the tray between them; needs about 2 GB extra space while installing). Every file is
+  MD5-checked, and anything missing or different is downloaded. Tested with the English 2003 three-CD set; other
+  editions are untested, and any of their files that match are used.
 - Already have the SWGEmu client files? Put them in a `client-files` folder next to the installer and it copies them
   instead of downloading them.
 - The server source is SWGEmu Core3 (AGPL-3.0). Our exact changes are in [`server-changes/`](server-changes/).

@@ -2,8 +2,10 @@
 # Gets the client files listed in SWGEmu's required2.txt (offline "client-files" folder next to the installer first,
 # then the LAN mirror if set, then SWGEmu's own patch server), checks every MD5, points the game at your server and makes Desktop/Start menu shortcuts.
 # Nothing is bundled here. Re-running it on an existing install only fetches missing or damaged files ("repair").
+# Got the original discs? Pick a copied folder, the .iso files or the CD drive under "Original discs": the big game
+# archives (about 2 GB) then come off them (discs\SwgDiscs.cs; it asks for each CD in turn) and only the rest is downloaded.
 # Start it with "Install Star Wars Galaxies.bat" (double-click).
-param([string]$Dest = "", [string]$Server = "", [string]$Mirror = "", [switch]$Quiet)
+param([string]$Dest = "", [string]$Server = "", [string]$Mirror = "", [string]$Discs = "", [switch]$Quiet)
 $StatusHost = ""
 
 $ErrorActionPreference = "Stop"
@@ -70,7 +72,7 @@ function Build-Launcher($dest, $exeName, $conf) {
 
 # ---------- window ----------
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Star Wars Galaxies installer"; $form.Size = New-Object System.Drawing.Size(560, 360)
+$form.Text = "Star Wars Galaxies installer"; $form.Size = New-Object System.Drawing.Size(560, 412)
 $form.StartPosition = "CenterScreen"; $form.FormBorderStyle = "FixedDialog"; $form.MaximizeBox = $false
 function Add-Label($text, $y) {
     $l = New-Object System.Windows.Forms.Label; $l.Text = $text; $l.Location = New-Object System.Drawing.Point(16, $y)
@@ -92,15 +94,35 @@ Add-Label "Server address:" 66
 $serverBox = Add-Box $Server 86 510
 Add-Label "LAN mirror (optional, faster at home):" 118
 $mirrorBox = Add-Box $Mirror 138 510
+Add-Label "Original discs (optional, saves a 2 GB download): folder, .iso files or CD drive" 166
+$discBox = Add-Box $Discs 186 260
+function Add-DiscButton($text, $x, $w, $action) {
+    $b = New-Object System.Windows.Forms.Button; $b.Text = $text; $b.Location = New-Object System.Drawing.Point($x, 184)
+    $b.Size = New-Object System.Drawing.Size($w, 24); $b.Add_Click($action); $form.Controls.Add($b)
+}
+function Add-Disc($more) {
+    $keep = @($discBox.Text.Split(';') | Where-Object { $_.Trim() -and $_.Trim() -ne "cdrom" })
+    $discBox.Text = (@($keep) + @($more)) -join ';'
+}
+Add-DiscButton "Folder..." 282 76 {
+    $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = "The folder with a copy of your Star Wars Galaxies discs"
+    if ($d.ShowDialog() -eq "OK") { Add-Disc $d.SelectedPath }
+}
+Add-DiscButton "ISO files..." 362 80 {
+    $d = New-Object System.Windows.Forms.OpenFileDialog; $d.Title = "Your Star Wars Galaxies disc images"; $d.Multiselect = $true
+    $d.Filter = "Disc images (*.iso)|*.iso|All files (*.*)|*.*"
+    if ($d.ShowDialog() -eq "OK") { Add-Disc $d.FileNames }
+}
+Add-DiscButton "CD drive" 446 80 { $discBox.Text = "cdrom" }
 $desk = New-Object System.Windows.Forms.CheckBox; $desk.Text = "Desktop shortcut"; $desk.Checked = $true
-$desk.Location = New-Object System.Drawing.Point(16, 170); $desk.AutoSize = $true; $form.Controls.Add($desk)
-$bar = New-Object System.Windows.Forms.ProgressBar; $bar.Location = New-Object System.Drawing.Point(16, 204); $bar.Width = 510
+$desk.Location = New-Object System.Drawing.Point(16, 222); $desk.AutoSize = $true; $form.Controls.Add($desk)
+$bar = New-Object System.Windows.Forms.ProgressBar; $bar.Location = New-Object System.Drawing.Point(16, 256); $bar.Width = 510
 $form.Controls.Add($bar)
-$status = New-Object System.Windows.Forms.Label; $status.Location = New-Object System.Drawing.Point(16, 234)
+$status = New-Object System.Windows.Forms.Label; $status.Location = New-Object System.Drawing.Point(16, 286)
 $status.Size = New-Object System.Drawing.Size(510, 40); $form.Controls.Add($status)
-$go = New-Object System.Windows.Forms.Button; $go.Text = "Install"; $go.Location = New-Object System.Drawing.Point(370, 282)
+$go = New-Object System.Windows.Forms.Button; $go.Text = "Install"; $go.Location = New-Object System.Drawing.Point(370, 334)
 $go.Size = New-Object System.Drawing.Size(75, 28); $form.Controls.Add($go)
-$quit = New-Object System.Windows.Forms.Button; $quit.Text = "Close"; $quit.Location = New-Object System.Drawing.Point(451, 282)
+$quit = New-Object System.Windows.Forms.Button; $quit.Text = "Close"; $quit.Location = New-Object System.Drawing.Point(451, 334)
 $quit.Size = New-Object System.Drawing.Size(75, 28); $form.Controls.Add($quit); $quit.Add_Click({ $form.Close() })
 if ($Retro) {   # starfield + the SWG logo from the offline client files (when they're next to the installer)
     $banner = New-Object Retro.Starfield; $banner.Title = "STAR WARS GALAXIES"; $banner.Sub = "A long time ago in a galaxy far, far away..."
@@ -152,17 +174,36 @@ function Test-Md5($file, $sum) {
     (Test-Path $file) -and ((Get-FileHash -Algorithm MD5 $file).Hash -eq $sum.ToUpper())
 }
 
+# The player's own discs: copies the files SWGEmu still uses straight into the game folder (MD5-checked against the list).
+function Read-Discs($sources, $list, $dest) {
+    $src = @("$Here\discs\SwgDiscs.cs", "$Here\..\windows\discs\SwgDiscs.cs") | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $src) { return }
+    try {
+        if (-not ("SwgDiscs.Discs" -as [type])) { Add-Type -TypeDefinition ([System.IO.File]::ReadAllText($src)) }
+        $r = New-Object SwgDiscs.Discs
+        $r.Status = [Action[string]] { param($t) Set-Status $t }
+        $r.Percent = [Action[int]] { param($p) $bar.Value = [Math]::Max(0, [Math]::Min(100, $p)); [System.Windows.Forms.Application]::DoEvents() }
+        $r.Ask = [Func[string, bool]] { param($m)
+            [System.Windows.Forms.MessageBox]::Show($m, "Star Wars Galaxies installer", "OKCancel", "Information") -eq "OK" }
+        $n = $r.Run($sources, $list, $dest, (Join-Path $dest ".disc-copy"))
+        Set-Status "Copied $n game files from your discs. Getting the rest..."
+    } catch { Set-Status "The discs couldn't be read ($($_.Exception.Message)) - downloading everything instead." }
+}
+
 function Install-Swg {
     $dest = $destBox.Text.Trim(); $server = $serverBox.Text.Trim(); $mirror = $mirrorBox.Text.Trim()
     if (-not $server) { throw "Please enter the server address." }
     New-Item -ItemType Directory -Force $dest | Out-Null
     $drive = (Get-Item $dest).PSDrive
-    if ($drive.Free -lt 5GB) { throw "Not enough space on $($drive.Name): need 5 GB free." }
+    $needGB = if ($discBox.Text.Trim() -eq "cdrom") { 7 } else { 5 }   # the CDs' archives are copied to disk first
+    if ($drive.Free -lt $needGB * 1GB) { throw "Not enough space on $($drive.Name): need $needGB GB free." }
 
     Set-Status "Getting the file list..."
     $list = Join-Path $dest "required2.txt"
     if (-not (Get-File "required2.txt" $list $mirror)) { throw "Can't download the SWGEmu file list (no internet, and no LAN mirror reachable)." }
     $entries = Get-Content $list | Where-Object { $_ -match ';' }
+    $discs = $discBox.Text.Trim()
+    if ($discs) { Read-Discs $discs $list $dest }
     $bad = @(); $i = 0
     foreach ($e in $entries) {
         $i++; $f, $size, $sum = $e.Split(';')

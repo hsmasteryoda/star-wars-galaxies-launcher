@@ -372,9 +372,11 @@ class Wizard:
     """Game-themed setup wizard in front of the install-*-linux.sh scripts (they do the real work; we pass --yes).
 
     theme: title, fg, accent, bg, font, banner(canvas, w, h) -> draws the banner, script, args(values) -> list,
-           fields: [(key, label, default, kind)] kind = "text" | "folder" | "check", size (GB, for the welcome text),
+           fields: [(key, label, default, kind)] kind = "text" | "folder" | "check" | "discs" (folder / .iso files / CD drive,
+           several joined with ";"), size (GB, for the welcome text),
            blurb (welcome text), launch (command list to start the game afterwards, given the install folder).
-    The script's stdout drives the progress: "# text" lines are status, bare numbers are percent.
+    The script's stdout drives the progress: "# text" lines are status, bare numbers are percent, and "?? text" asks the
+    player (e.g. to change discs): the answer goes back on the script's stdin as "ok" or "skip".
     """
     def __init__(self, theme):
         import tkinter as tk
@@ -433,6 +435,20 @@ class Wizard:
             v = self.vars.setdefault(key, tk.StringVar(value=default))
             tk.Entry(row, textvariable=v, bg=self.t["btn_bg"], fg=self.t["fg"], insertbackground=self.t["accent"], relief="flat",
                      font=self.font(10), highlightthickness=1, highlightbackground=self.t["accent"]).pack(side="left", fill="x", expand=True)
+            if kind == "discs":
+                def add(v, more):
+                    if more:
+                        v.set(";".join([x for x in v.get().split(";") if x.strip() and x.strip() != "cdrom"] + list(more)))
+                def disc_folder(v=v):
+                    from tkinter import filedialog
+                    d = filedialog.askdirectory(title="The folder with a copy of your discs")
+                    add(v, [d] if d else [])
+                def disc_isos(v=v):
+                    from tkinter import filedialog
+                    add(v, filedialog.askopenfilenames(title="Your disc images", filetypes=[("Disc images", "*.iso *.ISO"), ("All files", "*")]))
+                for t, cmd in (("Folder", disc_folder), ("ISO files", disc_isos), ("CD drive", lambda v=v: v.set("cdrom"))):
+                    tk.Button(row, text=t, command=cmd, bg=self.t["btn_bg"], fg=self.t["fg"], relief="ridge",
+                              font=self.font(9), highlightthickness=0).pack(side="left", padx=(4 * self.s, 0))
             if kind in ("folder", "folder_src"):
                 def pick(v=v, kind=kind, default=default):
                     from tkinter import filedialog
@@ -459,7 +475,8 @@ class Wizard:
         self.pct = None; self.pulse = 0
         cmd = [self.t["script"]] + self.t["args"](values)
         env = dict(os.environ, RETRO_WIZARD="1")
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env)
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                     bufsize=1, env=env)
         self.out = []
         import threading
         threading.Thread(target=self._read, daemon=True).start()
@@ -477,6 +494,13 @@ class Wizard:
                 self.pct = min(100, int(line))
             elif line.startswith("# "):
                 self.detail.config(text=line[2:])
+            elif line.startswith("?? "):         # the script asks something (e.g. "insert disc 2"): OK / skip
+                from tkinter import messagebox
+                ok = messagebox.askokcancel(self.t["title"] + " Setup", line[3:], parent=self.root)
+                try:
+                    self.proc.stdin.write("ok\n" if ok else "skip\n"); self.proc.stdin.flush()
+                except OSError:
+                    pass
             elif line:
                 self.last = line
                 if not line.startswith(("ERROR", "WARNING")):
