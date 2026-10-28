@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Install Star Wars Galaxies
+Comment=Install Star Wars Galaxies and join the Sugma Big Tasty galaxy
+Exec=sh -c 'cd "$(dirname "%k")" && ./install-swg-linux.sh'
+Icon=system-software-install
+Terminal=false

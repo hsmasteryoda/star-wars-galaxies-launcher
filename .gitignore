@@ -1,0 +1,13 @@
+# never commit game files
+*.tre
+*.exe
+*.dll
+*.iso
+*.cab
+*.hdr
+*CD_KEY*
+launcher/art/
+__pycache__/
+*.tar.gz
+dist/
+client-files/
