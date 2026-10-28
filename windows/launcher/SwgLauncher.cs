@@ -63,9 +63,10 @@ namespace Retro
             var rnd = new Random(1977); stars = new Point[260];
             for (int i = 0; i < stars.Length; i++) stars[i] = new Point(rnd.Next(W), rnd.Next(H));
             buttons.Add(new Btn { R = new Rectangle(22, 340, 140, 50), Label = "PLAY", Big = true, Click = Play });
-            buttons.Add(new Btn { R = new Rectangle(178, 350, 110, 32), Label = "SETTINGS", Click = () => Art.Start(Path.Combine(Dir, "SWGEmu_Setup.exe"), "", Dir) });
-            buttons.Add(new Btn { R = new Rectangle(300, 350, 124, 32), Label = "CONTROLLER", Click = Controller });
-            buttons.Add(new Btn { R = new Rectangle(504, 350, 110, 32), Label = "EXIT", Click = () => f.Close() });
+            buttons.Add(new Btn { R = new Rectangle(172, 350, 100, 32), Label = "SETTINGS", Click = () => Art.Start(Path.Combine(Dir, "SWGEmu_Setup.exe"), "", Dir) });
+            buttons.Add(new Btn { R = new Rectangle(280, 350, 100, 32), Label = "DISPLAY", Click = DisplaySettings });
+            buttons.Add(new Btn { R = new Rectangle(388, 350, 124, 32), Label = "CONTROLLER", Click = Controller });
+            buttons.Add(new Btn { R = new Rectangle(520, 350, 94, 32), Label = "EXIT", Click = () => f.Close() });
             f.Paint += Paint;
             f.KeyDown += (s, e) => { if (e.KeyCode == Keys.Escape) f.Close(); };
             f.MouseMove += (s, e) =>
@@ -119,6 +120,10 @@ namespace Retro
                 using (var fnt = new Font("Segoe UI", bt.Big ? 16f : 10f, FontStyle.Bold)) using (var b = new SolidBrush(Gold))
                     g.DrawString(bt.Label, fnt, b, bt.R, new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center });
             }
+            int dw, dh; string dm; ReadDisplay(out dw, out dh, out dm);
+            if (dw > 0)
+                using (var fnt = new Font("Segoe UI", 8f)) using (var b = new SolidBrush(Color.FromArgb(154, 170, 187)))
+                    g.DrawString(dw + " x " + dh + ", " + dm, fnt, b, 330, 388, new StringFormat { Alignment = StringAlignment.Center });
         }
 
         void Refresh()
@@ -148,6 +153,58 @@ namespace Retro
                     statusColor = text != null ? col : Color.FromArgb(204, 221, 238); f.Invalidate();
                 }));
             }) { IsBackground = true }.Start();
+        }
+
+        // ---- resolution: options.cfg [ClientGraphics] screenWidth / screenHeight / windowed / borderlessWindow
+        static string OptionsCfg { get { return Path.Combine(Dir, "options.cfg"); } }
+
+        static void ReadDisplay(out int w, out int h, out string mode)
+        {
+            var v = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (File.Exists(OptionsCfg))
+                foreach (var line in File.ReadAllLines(OptionsCfg))
+                {
+                    var m = Regex.Match(line, @"^\s*(\w+)\s*=\s*(\d+)\s*$"); int n;
+                    if (m.Success && int.TryParse(m.Groups[2].Value, out n)) v[m.Groups[1].Value] = n;
+                }
+            Func<string, int> get = k => { int n; return v.TryGetValue(k, out n) ? n : 0; };
+            w = get("screenWidth"); h = get("screenHeight");
+            mode = get("windowed") == 0 ? "fullscreen" : get("borderlessWindow") != 0 ? "borderless" : "windowed";
+        }
+
+        static void WriteDisplay(int w, int h, string mode)
+        {
+            var want = new Dictionary<string, int> { { "screenWidth", w }, { "screenHeight", h }, { "windowed", mode == "fullscreen" ? 0 : 1 },
+                                                     { "borderlessWindow", mode == "borderless" ? 1 : 0 } };
+            var lines = File.Exists(OptionsCfg) ? new List<string>(File.ReadAllLines(OptionsCfg)) : new List<string>();
+            var o = new List<string>(); var done = new List<string>(); string section = null;
+            Action flush = () => { foreach (var kv in want) if (!done.Contains(kv.Key)) { o.Add("\t" + kv.Key + "=" + kv.Value); done.Add(kv.Key); } };
+            foreach (var line in lines)
+            {
+                var sec = Regex.Match(line, @"^\s*\[(\w+)\]");
+                if (sec.Success)
+                {
+                    if (section == "ClientGraphics") { while (o.Count > 0 && o[o.Count - 1].Trim() == "") o.RemoveAt(o.Count - 1); flush(); o.Add(""); }
+                    section = sec.Groups[1].Value;
+                }
+                else
+                {
+                    var k = Regex.Match(line, @"^\s*(\w+)\s*=");
+                    if (section == "ClientGraphics" && k.Success && want.ContainsKey(k.Groups[1].Value))
+                    { o.Add("\t" + k.Groups[1].Value + "=" + want[k.Groups[1].Value]); done.Add(k.Groups[1].Value); continue; }
+                }
+                o.Add(line);
+            }
+            if (section == "ClientGraphics") flush();
+            if (done.Count < want.Count) { o.Add(""); o.Add("[ClientGraphics]"); flush(); }
+            File.WriteAllLines(OptionsCfg, o.ToArray());
+        }
+
+        void DisplaySettings()
+        {
+            int w, h; string m; ReadDisplay(out w, out h, out m);
+            Display.Show(f, PanelC, Color.FromArgb(204, 221, 238), Gold, Color.FromArgb(19, 40, 58), "Segoe UI", w, h, m,
+                         new[] { "borderless", "fullscreen", "windowed" }, (nw, nh, nm) => { WriteDisplay(nw, nh, nm); f.Invalidate(); });
         }
 
         void Play()

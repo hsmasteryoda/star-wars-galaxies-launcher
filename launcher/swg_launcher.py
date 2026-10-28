@@ -41,6 +41,54 @@ def extract():
     print("SWG launcher art saved in", ART)
 
 
+def read_display(path=None):
+    """(width, height, mode) from options.cfg ([ClientGraphics] screenWidth/screenHeight/windowed/borderlessWindow)."""
+    v = {}
+    try:
+        for line in open(path or os.path.join(GAME, "options.cfg"), encoding="latin-1"):
+            m = re.match(r"\s*(\w+)\s*=\s*(\S+)", line)
+            if m:
+                v[m.group(1).lower()] = m.group(2)
+    except OSError:
+        pass
+    num = lambda k: int(v[k]) if v.get(k, "").isdigit() else 0
+    mode = "fullscreen" if not num("windowed") else ("borderless" if num("borderlesswindow") else "windowed")
+    return num("screenwidth"), num("screenheight"), mode
+
+
+def write_display(w, h, mode, path=None):
+    """Set the resolution keys in options.cfg's [ClientGraphics] section, keeping everything else."""
+    path = path or os.path.join(GAME, "options.cfg")
+    want = {"screenWidth": w, "screenHeight": h, "windowed": int(mode != "fullscreen"), "borderlessWindow": int(mode == "borderless")}
+    try:
+        lines = open(path, encoding="latin-1").read().splitlines()
+    except OSError:
+        lines = []
+    out, section, done = [], None, set()
+    def flush():
+        for k, val in want.items():
+            if k not in done:
+                out.append("\t%s=%s" % (k, val)); done.add(k)
+    for line in lines:
+        m = re.match(r"\s*\[(\w+)\]", line)
+        if m:
+            if section == "ClientGraphics":
+                while out and not out[-1].strip():
+                    out.pop()
+                flush(); out.append("")
+            section = m.group(1)
+        else:
+            k = re.match(r"\s*(\w+)\s*=", line)
+            if section == "ClientGraphics" and k and k.group(1) in want:
+                out.append("\t%s=%s" % (k.group(1), want[k.group(1)])); done.add(k.group(1)); continue
+        out.append(line)
+    if section == "ClientGraphics":
+        flush()
+    if len(done) < len(want):
+        out += ["", "[ClientGraphics]"]; flush()
+    open(path, "w", encoding="latin-1").write("\n".join(out) + "\n")
+
+
 def galaxy():
     """(name, up, players) from the server's status port, or None."""
     host = CONF.get("STATUS") or CONF.get("SERVER")
@@ -93,6 +141,7 @@ class Launcher:
         self.planet = c.create_image(418 * s, 10 * s, anchor="nw")
         self.pname = self.text(526, 232, "", 9, "#9ab", anchor="n")
         # status / buttons panel
+        c.create_rectangle(0, 252 * s, W * s, H * s, fill="black", outline="")      # the crawl scrolls under here
         c.create_rectangle(10 * s, 252 * s, (W - 10) * s, (H - 10) * s, fill=self.PANEL, outline=self.BLUE, width=s)
         c.create_line(10 * s, 278 * s, (W - 10) * s, 278 * s, fill="#1f3c55", width=s)
         self.text(22, 265, "GALAXY", 9, self.BLUE, weight="bold", anchor="w")
@@ -100,9 +149,11 @@ class Launcher:
         self.text(22, 292, "New player? Type any new name and password at the login screen - your account is made on the spot.\n"
                            "Then build your character: species, looks and profession are all yours to choose.", 8, "#9ab", anchor="nw")
         self.button(22, 340, 140, 50, "PLAY", self.play, big=True)
-        self.button(178, 350, 110, 32, "SETTINGS", lambda: self.run("settings"))
-        self.button(300, 350, 124, 32, "CONTROLLER", self.controller)
-        self.button(504, 350, 110, 32, "EXIT", root.destroy)
+        self.button(172, 350, 100, 32, "SETTINGS", lambda: self.run("settings"))
+        self.button(280, 350, 100, 32, "DISPLAY", self.display)
+        self.button(388, 350, 124, 32, "CONTROLLER", self.controller)
+        self.button(520, 350, 94, 32, "EXIT", root.destroy)
+        self.disp = self.text(330, 396, "", 8, "#9ab", anchor="n"); self.show_display()
         c.bind("<ButtonPress-1>", self._press); c.bind("<B1-Motion>", self._move)
         root.bind("<Escape>", lambda e: root.destroy())
         self.n = 0; self.cycle(); self.scroll(); self.refresh()
@@ -167,6 +218,15 @@ class Launcher:
 
     def play(self):
         self.run(); self.root.after(600, self.root.destroy)
+
+    def show_display(self):
+        w, h, mode = read_display()
+        self.c.itemconfig(self.disp, text=("%d x %d, %s" % (w, h, mode)) if w else "")
+
+    def display(self):
+        retro.display_dialog(self.root, {"bg": self.PANEL, "fg": "#cde", "accent": self.GOLD, "btn_bg": "#13283a"}, read_display(),
+                             lambda w, h, m: (write_display(w, h, m), self.show_display()),
+                             modes=("borderless", "fullscreen", "windowed"))
 
     def controller(self):
         p = os.path.join(DEST, "controller", "README.md")

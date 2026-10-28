@@ -14,6 +14,8 @@ It works on Windows and Linux.
   patch server and checks every file's MD5. A re-run repairs damaged or missing files.
 - **Got the original discs?** The installer can take about 2 GB of the game off them instead of downloading it: a
   copied folder, the `.iso` files, or the discs in your CD drive (it asks for each disc in turn). Optional.
+- **Pick your resolution.** The game has no resolution option of its own, so the launcher's **DISPLAY** button sets it
+  (16:9, 16:10, ultrawide...) plus Borderless / Fullscreen / Windowed.
 - **Controller support:** see [`controller/README.md`](controller/README.md) (Steam Input or AntiMicroX).
 
 ## Install

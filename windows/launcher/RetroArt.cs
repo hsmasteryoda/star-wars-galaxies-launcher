@@ -496,4 +496,112 @@ namespace Retro
                 g.DrawString(Sub, tf, b, new RectangleF(0, Height - 26, Width, 22), sf);
         }
     }
+
+    // ---------------------------------------------------------------- screen resolution picker (the games have none built in)
+    public static class Display
+    {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        struct DEVMODE
+        {
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+            public short dmSpecVersion, dmDriverVersion, dmSize, dmDriverExtra; public int dmFields;
+            public int dmPositionX, dmPositionY, dmDisplayOrientation, dmDisplayFixedOutput;
+            public short dmColor, dmDuplex, dmYResolution, dmTTOption, dmCollate;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+            public short dmLogPixels; public int dmBitsPerPel, dmPelsWidth, dmPelsHeight, dmDisplayFlags, dmDisplayFrequency;
+            public int dmICMMethod, dmICMIntent, dmMediaType, dmDitherType, dmReserved1, dmReserved2, dmPanningWidth, dmPanningHeight;
+        }
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        static extern bool EnumDisplaySettings(string device, int mode, ref DEVMODE dm);
+
+        // the real sizes this screen supports (not DPI-scaled), and its current one
+        public static List<Size> Modes(out Size native)
+        {
+            var dm = new DEVMODE(); dm.dmSize = (short)Marshal.SizeOf(typeof(DEVMODE));
+            var o = new List<Size>();
+            try
+            {
+                native = EnumDisplaySettings(null, -1, ref dm) ? new Size(dm.dmPelsWidth, dm.dmPelsHeight) : Screen.PrimaryScreen.Bounds.Size;
+                for (int i = 0; EnumDisplaySettings(null, i, ref dm); i++)
+                {
+                    var s = new Size(dm.dmPelsWidth, dm.dmPelsHeight);
+                    if (dm.dmBitsPerPel >= 32 && s.Width >= 800 && !o.Contains(s)) o.Add(s);
+                }
+            }
+            catch (Exception)                     // no Windows display API (e.g. Mono): the usual sizes that fit the screen
+            {
+                native = Screen.PrimaryScreen.Bounds.Size;
+                foreach (var s in new[] { new Size(1024, 768), new Size(1280, 720), new Size(1280, 800), new Size(1280, 1024), new Size(1366, 768),
+                                          new Size(1440, 900), new Size(1600, 900), new Size(1680, 1050), new Size(1920, 1080), new Size(1920, 1200),
+                                          new Size(2560, 1080), new Size(2560, 1440), new Size(2560, 1600), new Size(3440, 1440), new Size(3840, 2160) })
+                    if (s.Width <= native.Width && s.Height <= native.Height) o.Add(s);
+            }
+            if (!o.Contains(native)) o.Add(native);
+            o.Sort((a, b) => a.Width != b.Width ? a.Width.CompareTo(b.Width) : a.Height.CompareTo(b.Height));
+            return o;
+        }
+
+        public static string Aspect(int w, int h)
+        {
+            double r = (double)w / h; string best = null; double d = 9;
+            foreach (var n in new[] { new KeyValuePair<double, string>(4 / 3.0, "4:3"), new KeyValuePair<double, string>(5 / 4.0, "5:4"),
+                                      new KeyValuePair<double, string>(16 / 9.0, "16:9"), new KeyValuePair<double, string>(16 / 10.0, "16:10"),
+                                      new KeyValuePair<double, string>(3 / 2.0, "3:2"), new KeyValuePair<double, string>(21 / 9.0, "21:9"),
+                                      new KeyValuePair<double, string>(32 / 9.0, "32:9") })
+                if (Math.Abs(n.Key - r) < d) { d = Math.Abs(n.Key - r); best = n.Value; }
+            return d < 0.03 ? best : w + ":" + h;
+        }
+
+        // Pick a resolution and fullscreen / windowed / borderless; save(w, h, mode) writes the game's config.
+        // modes: which of "fullscreen", "borderless", "windowed" the game supports.
+        public static void Show(IWin32Window owner, Color bg, Color fg, Color accent, Color box, string font,
+                                int w, int h, string mode, string[] modes, Action<int, int, string> save)
+        {
+            Size native; var sizes = Modes(out native);
+            var cur = new Size(w, h); if (w > 0 && h > 0 && !sizes.Contains(cur)) { sizes.Add(cur); sizes.Sort((a, b) => a.Width != b.Width ? a.Width.CompareTo(b.Width) : a.Height.CompareTo(b.Height)); }
+            var d = new Form { Text = "Display", FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false,
+                               ShowInTaskbar = false, StartPosition = FormStartPosition.CenterParent, BackColor = bg, ForeColor = fg,
+                               ClientSize = new Size(380, 410), Font = new Font(font, 9.5f) };
+            Func<string, int, float, Color, bool, Label> label = (t, y, size, c, bold) =>
+            {
+                var l = new Label { Text = t, Left = 16, Top = y, AutoSize = true, ForeColor = c, Font = new Font(font, size, bold ? FontStyle.Bold : FontStyle.Regular) };
+                d.Controls.Add(l); return l;
+            };
+            label("DISPLAY", 10, 14f, accent, true);
+            label("Your screen: " + native.Width + " x " + native.Height + " (" + Aspect(native.Width, native.Height) + ")", 40, 9.5f, fg, false);
+            label("Resolution", 68, 9.5f, accent, true);
+            var lb = new ListBox { Left = 16, Top = 90, Width = 348, Height = 150, BackColor = box, ForeColor = fg, BorderStyle = BorderStyle.FixedSingle,
+                                   Font = new Font("Consolas", 10f), IntegralHeight = false };
+            foreach (var s in sizes)
+                lb.Items.Add(string.Format("{0,5} x {1,-5}  {2,-5}{3}", s.Width, s.Height, Aspect(s.Width, s.Height), s == native ? "  (your screen)" : ""));
+            int pick = sizes.IndexOf(cur); lb.SelectedIndex = pick >= 0 ? pick : sizes.IndexOf(native);
+            d.Controls.Add(lb);
+            label("Mode", 250, 9.5f, accent, true);
+            var names = new Dictionary<string, string> { { "fullscreen", "Fullscreen" }, { "windowed", "Windowed" },
+                                                         { "borderless", "Borderless window (fullscreen look, easy Alt+Tab)" } };
+            var radios = new List<RadioButton>(); int ry = 272;
+            foreach (var m in modes)
+            {
+                var r = new RadioButton { Text = names[m], Tag = m, Left = 20, Top = ry, AutoSize = true, ForeColor = fg, Checked = m == mode };
+                d.Controls.Add(r); radios.Add(r); ry += 22;
+            }
+            if (!radios.Exists(r => r.Checked)) radios[0].Checked = true;
+            label("Tip: your screen's own size looks sharpest.", ry + 4, 8.5f, fg, false);
+            Func<string, int, Button> btn = (t, x) =>
+            {
+                var b = new Button { Text = t, Left = x, Top = 368, Width = 84, Height = 28, FlatStyle = FlatStyle.Flat, BackColor = box, ForeColor = accent,
+                                     Font = new Font(font, 9.5f, FontStyle.Bold) };
+                b.FlatAppearance.BorderColor = accent; d.Controls.Add(b); return b;
+            };
+            var ok = btn("Save", 188); var cancel = btn("Cancel", 280);
+            ok.Click += (s, e) =>
+            {
+                var sz = lb.SelectedIndex >= 0 ? sizes[lb.SelectedIndex] : native;
+                save(sz.Width, sz.Height, (string)radios.Find(r => r.Checked).Tag); d.Close();
+            };
+            cancel.Click += (s, e) => d.Close();
+            d.AcceptButton = ok; d.CancelButton = cancel;
+            d.ShowDialog(owner);
+        }
+    }
 }

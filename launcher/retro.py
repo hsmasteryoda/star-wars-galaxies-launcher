@@ -571,3 +571,99 @@ def matrix_rain(canvas, w, h, s, title="", sub=""):
 
 if __name__ == "__main__":
     sys.exit("This is a library used by the game launchers.")
+
+
+# ---------------------------------------------------------------- screen resolution picker (the games have none built in)
+COMMON_MODES = [(800, 600), (1024, 768), (1152, 864), (1280, 720), (1280, 800), (1280, 1024), (1366, 768), (1440, 900),
+                (1600, 900), (1600, 1200), (1680, 1050), (1920, 1080), (1920, 1200), (2560, 1080), (2560, 1440),
+                (2560, 1600), (2880, 1800), (3440, 1440), (3840, 1600), (3840, 2160)]
+
+
+def aspect(w, h):
+    """'16:9', '16:10', '4:3', '5:4', '21:9' ... for a resolution (1366x768 counts as 16:9)."""
+    r = w / float(h)
+    names = [(4 / 3., "4:3"), (5 / 4., "5:4"), (16 / 9., "16:9"), (16 / 10., "16:10"), (3 / 2., "3:2"), (21 / 9., "21:9"),
+             (32 / 9., "32:9")]
+    best = min(names, key=lambda n: abs(n[0] - r))
+    return best[1] if abs(best[0] - r) < 0.03 else "%d:%d" % (w, h)
+
+
+def screen_modes(root=None):
+    """(native (w, h), [(w, h), ...]) - xrandr's list for this screen when it has one, plus the common sizes that fit."""
+    native, modes = None, set()
+    try:
+        out = subprocess.run(["xrandr", "--current"], capture_output=True, text=True, timeout=5).stdout
+        for line in out.splitlines():
+            m = re.match(r"\s+(\d+)x(\d+)\s+(.*)", line)
+            if m:
+                wh = (int(m.group(1)), int(m.group(2)))
+                if "*" in m.group(3) and native is None:
+                    native = wh
+                if wh in COMMON_MODES:              # skip the odd sizes XWayland makes up
+                    modes.add(wh)
+    except Exception:
+        pass
+    if native is None and root is not None:
+        native = (root.winfo_screenwidth(), root.winfo_screenheight())
+    native = native or (1920, 1080)
+    modes.add(native)
+    modes.update(m for m in COMMON_MODES if m[0] <= native[0] and m[1] <= native[1])
+    return native, sorted(modes)
+
+
+def display_dialog(root, theme, current, save, modes=("fullscreen", "windowed")):
+    """Pick a resolution and fullscreen / windowed / borderless before the game starts.
+
+    theme: bg, fg, accent, btn_bg (+ font); current: (w, h, mode); save(w, h, mode) writes the game's config.
+    modes: which of "fullscreen", "borderless", "windowed" this game supports (first = default)."""
+    import tkinter as tk
+    s = tk_scale(root); bg, fg, ac, bb = theme["bg"], theme["fg"], theme["accent"], theme["btn_bg"]
+    fam = theme.get("font", "DejaVu Sans")
+    f = lambda size, w="normal": (fam, -size * s, w)
+    inside = bool(root.overrideredirect())     # borderless skins stay on top of other windows: draw the panel inside them
+    if inside:
+        d = tk.Frame(root, bg=bg, padx=14 * s, pady=10 * s, highlightthickness=2 * s, highlightbackground=ac, highlightcolor=ac)
+    else:
+        d = tk.Toplevel(root); d.title("Display"); d.configure(bg=bg, padx=14 * s, pady=10 * s); d.resizable(False, False)
+        d.transient(root)
+    native, sizes = screen_modes(root)
+    tk.Label(d, text="DISPLAY", bg=bg, fg=ac, font=f(14, "bold")).pack(anchor="w")
+    tk.Label(d, text="Your screen: %d x %d (%s)" % (native[0], native[1], aspect(*native)), bg=bg, fg=fg, font=f(10)).pack(anchor="w")
+    tk.Label(d, text="Resolution", bg=bg, fg=ac, font=f(10, "bold")).pack(anchor="w", pady=(8 * s, 2 * s))
+    row = tk.Frame(d, bg=bg); row.pack(fill="x")
+    lb = tk.Listbox(row, height=7, width=30, bg=bb, fg=fg, selectbackground=ac, selectforeground=bb, font=f(10),
+                    highlightthickness=1, highlightbackground=ac, relief="flat", activestyle="none", exportselection=False)
+    sb = tk.Scrollbar(row, command=lb.yview, bg=bb, troughcolor=bg, activebackground=ac, highlightthickness=0)
+    lb.config(yscrollcommand=sb.set); lb.pack(side="left", fill="x", expand=True); sb.pack(side="left", fill="y")
+    cw, ch, cmode = current
+    if (cw, ch) not in sizes and cw and ch:
+        sizes = sorted(set(sizes) | {(cw, ch)})
+    for w, h in sizes:
+        lb.insert("end", "%5d x %-5d  %-5s%s" % (w, h, aspect(w, h), "  (your screen)" if (w, h) == native else ""))
+    pick = sizes.index((cw, ch)) if (cw, ch) in sizes else sizes.index(native)
+    lb.selection_set(pick); lb.see(pick)
+    tk.Label(d, text="Mode", bg=bg, fg=ac, font=f(10, "bold")).pack(anchor="w", pady=(8 * s, 2 * s))
+    mv = tk.StringVar(value=cmode if cmode in modes else modes[0])
+    names = {"fullscreen": "Fullscreen", "windowed": "Windowed",
+             "borderless": "Borderless window (fullscreen look, easy Alt+Tab)"}
+    for m in modes:
+        tk.Radiobutton(d, text=names[m], value=m, variable=mv, bg=bg, fg=fg, selectcolor=bb, activebackground=bg,
+                       activeforeground=ac, font=f(10), highlightthickness=0).pack(anchor="w")
+    tk.Label(d, text="Tip: pick your screen's own size for a sharp picture with the right shape.", bg=bg, fg=fg,
+             font=f(8), wraplength=330 * s, justify="left").pack(anchor="w", pady=(6 * s, 0))
+    foot = tk.Frame(d, bg=bg); foot.pack(fill="x", pady=(10 * s, 0))
+    def ok():
+        w, h = sizes[lb.curselection()[0]] if lb.curselection() else native
+        save(w, h, mv.get()); d.destroy()
+    for t, cmd in (("Cancel", d.destroy), ("Save", ok)):
+        tk.Button(foot, text=t, command=cmd, bg=bb, fg=ac, activebackground=ac, activeforeground=bb, relief="ridge",
+                  bd=2 * s, font=f(10, "bold"), padx=12 * s, highlightthickness=0, cursor="hand2").pack(side="right", padx=4 * s)
+    d.bind("<Escape>", lambda e: d.destroy()); d.bind("<Return>", lambda e: ok())
+    if inside:
+        d.place(relx=0.5, rely=0.5, anchor="center")
+    else:
+        d.update_idletasks()
+        d.geometry("+%d+%d" % (root.winfo_rootx() + (root.winfo_width() - d.winfo_width()) // 2,
+                               root.winfo_rooty() + (root.winfo_height() - d.winfo_height()) // 2))
+    d.lift(); d.focus_force(); d.grab_set()
+    return d
