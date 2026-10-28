@@ -52,21 +52,25 @@ function Set-Look($banner, $bannerH, $bg, $fg, $accent, $box) {
     $form.BackColor = $bg; $form.Height += $bannerH
     $banner.SetBounds(0, 0, $form.ClientSize.Width, $bannerH); $form.Controls.Add($banner)
 }
-# Builds "<dest>\<exeName>" and lets it read its art; returns the exe, or $null (shortcuts then start the game directly)
+# Builds "<dest>\<exeName>" and lets it read its art; returns the exe, or $null (shortcuts then start the game directly).
+# Anything that goes wrong is written to <dest>\launcher-build.log.
 function Build-Launcher($dest, $exeName, $conf) {
-    if (-not $LauncherSrc.Count) { return $null }
+    $log = Join-Path $dest "launcher-build.log"
+    if (-not $LauncherSrc.Count) { "launcher source (windows\launcher\*.cs) not found next to the installer" | Set-Content $log; return $null }
     $exe = Join-Path $dest $exeName
     try {
         $cp = New-Object System.CodeDom.Compiler.CompilerParameters
         $cp.GenerateExecutable = $true; $cp.OutputAssembly = $exe; $cp.CompilerOptions = "/target:winexe /optimize"
         [void]$cp.ReferencedAssemblies.AddRange([string[]]@("System.dll", "System.Drawing.dll", "System.Windows.Forms.dll"))
         $r = (New-Object Microsoft.CSharp.CSharpCodeProvider).CompileAssemblyFromSource($cp, [string[]]$LauncherSrc)
-        if ($r.Errors.HasErrors) { return $null }
+        if ($r.Errors.HasErrors) { $r.Errors | ForEach-Object { $_.ToString() } | Set-Content $log; return $null }
         [System.IO.File]::WriteAllText((Join-Path $dest "launcher.conf"), $conf)
         $p = Start-Process -FilePath $exe -ArgumentList "--extract" -WorkingDirectory $dest -PassThru
         while (-not $p.HasExited) { Start-Sleep -Milliseconds 200; [System.Windows.Forms.Application]::DoEvents() }
-    } catch { return $null }
-    if (Test-Path (Join-Path $dest "launcher-art\icon.ico")) { return $exe }
+    } catch { "$($_.Exception.Message)" | Set-Content $log; if (-not (Test-Path $exe)) { return $null } }
+    # built: use it even if the art didn't come out (it tries again, and says why, when it starts)
+    if (-not (Test-Path (Join-Path $dest "launcher-art\icon.ico"))) { "launcher built, but reading the art from the .tre files failed" | Set-Content $log }
+    if (Test-Path $exe) { return $exe }
     return $null
 }
 
@@ -232,6 +236,9 @@ function Install-Swg {
     $sh_status = if ($StatusHost) { $StatusHost } else { $server }
     $launcher = Build-Launcher $dest "SWG Launcher.exe" "SERVER=$server`r`nSTATUS=$sh_status`r`n"
     $play = if ($launcher) { "SWG Launcher.exe" } else { "SWGEmu.exe" }
+    if (-not $launcher) {
+        [System.Windows.Forms.MessageBox]::Show("The SWG launcher couldn't be built on this PC, so the shortcuts start the game directly.`n`nThe reason is in $dest\launcher-build.log", "Star Wars Galaxies installer", "OK", "Warning") | Out-Null
+    }
 
     Set-Status "Making shortcuts..."
     $sh = New-Object -ComObject WScript.Shell
@@ -241,7 +248,7 @@ function Install-Swg {
     if ($desk.Checked) { $links += , @((Join-Path ([Environment]::GetFolderPath("Desktop")) "Star Wars Galaxies.lnk"), $play) }
     foreach ($l in $links) {
         $s = $sh.CreateShortcut($l[0]); $s.TargetPath = Join-Path $dest $l[1]; $s.WorkingDirectory = $dest
-        if ($launcher -and $l[1] -eq $play) { $s.IconLocation = Join-Path $dest "launcher-art\icon.ico" }
+        if ($launcher -and $l[1] -eq $play -and (Test-Path (Join-Path $dest "launcher-art\icon.ico"))) { $s.IconLocation = Join-Path $dest "launcher-art\icon.ico" }
         $s.Save()
     }
 
