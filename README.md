@@ -41,6 +41,17 @@ Windows), so there is no pre-built program to trust.
 
 ![Setup](docs/setup.png)
 
+## Automatic updates
+
+The launcher checks this repository's latest GitHub release every time it starts. When there's a newer version it
+downloads it, checks it, rebuilds itself (Windows) or swaps in the new files (Linux), and restarts. Players never
+have to reinstall for launcher fixes.
+
+Every update is signed: the release's `update-manifest.txt` lists each file's SHA-256 and is signed with an
+RSA-3072 key that stays on the maintainer's PC (`update-manifest.sig`). The launcher has the public key built in, so it
+ignores any update without a valid signature, any older or same version, and any file that doesn't match its
+checksum. If anything fails, the working version stays. Releases are made with `tools/make-update.py X.Y.Z`.
+
 ## Good to know
 
 - This is a fan-run emulator server, not the original servers. Expect the occasional restart. The admins watch over it.

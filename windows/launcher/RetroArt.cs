@@ -604,4 +604,105 @@ namespace Retro
             d.ShowDialog(owner);
         }
     }
+
+    // ---------------------------------------------------------------- signed self-updates (from the public GitHub releases)
+    // A release carries update-manifest.txt + update-manifest.sig (RSA-3072 / SHA-256, signed with a key that never leaves
+    // the maintainer's PC). Only a manifest with a good signature, a newer version and files that all match their SHA-256
+    // is used: the new C# source is downloaded into launcher-src\ and this launcher is rebuilt from it on this PC.
+    public static class Updater
+    {
+        const string Modulus = "F5B5F0EFE3BA17D9B31FD04E1304E01F2F16C36BFD2195001F6B0A4F7D2CA396B7C404385149309A52E884550D7B88272B993D4F5DA9C5BBE5D91EAD1A9BD4601F4B0925CECF7B112C1BFADD8C5F21982C3352DBFA0E641BC783A374F2DA1BB33B6ADEEF54932B1914F00F479005BF19E71AEDA53BA0A73D0C92F10F9A4CFAE1C6019167283CD5BF8030A181E17A9AD4D24CB1D1D30D6AEFE2B40AD7A3237351EB585334E8915FA5D0D865CC932520611D9DC402D188D84D71CC71D95FBE09CE614792DC05D695F43BBBD54FC3D7CF1D3A39E600331E8AAD6CF36DD6400F0AF3576C3C4F693836C5AD7CF31AC349CF6627B1C02AC7E35803D86C0072EE65B8AACEEE94DD77B31F8D44808912B4F1FFB4772C6D1744FFD6D04BDA66BF4EE44489CE5BEA7D9FBECA2FB0DFDFDCE0A7FE2EDF9327959AABF51D3035B52B64C53D6CC9C290E6B3DF3FCFCEAEA8F20C19303CD25232BEB41DF1A1FEEABA8EA1A48D908CD60F6706C61C51712FF2CED45832D485D27D0540B9AE1F6A405C9E0A5041F1";
+        public class Update { public string Version, Tag; public List<string[]> Files = new List<string[]>(); }   // {sha256, size, path}
+
+        static byte[] Hex(string h) { var b = new byte[h.Length / 2]; for (int i = 0; i < b.Length; i++) b[i] = Convert.ToByte(h.Substring(2 * i, 2), 16); return b; }
+
+        public static bool Verify(byte[] data, byte[] sig)
+        {
+            try
+            {
+                using (var rsa = new System.Security.Cryptography.RSACryptoServiceProvider(new System.Security.Cryptography.CspParameters { ProviderType = 24 }))
+                {
+                    rsa.PersistKeyInCsp = false;
+                    rsa.ImportParameters(new System.Security.Cryptography.RSAParameters { Modulus = Hex(Modulus), Exponent = new byte[] { 1, 0, 1 } });
+                    using (var sha = System.Security.Cryptography.SHA256.Create())
+                        return rsa.VerifyHash(sha.ComputeHash(data), System.Security.Cryptography.CryptoConfig.MapNameToOID("SHA256"), sig);
+                }
+            }
+            catch { return false; }
+        }
+
+        static byte[] Get(string url)
+        {
+            System.Net.ServicePointManager.SecurityProtocol |= (System.Net.SecurityProtocolType)3072;   // TLS 1.2 (GitHub needs it)
+            using (var w = new System.Net.WebClient()) { w.Headers["User-Agent"] = "retro-launcher"; return w.DownloadData(url); }
+        }
+
+        static int[] Ver(string v) { var o = new int[3]; var m = System.Text.RegularExpressions.Regex.Matches(v, @"\d+"); for (int i = 0; i < 3 && i < m.Count; i++) o[i] = int.Parse(m[i].Value); return o; }
+        static bool Newer(string a, string b) { var x = Ver(a); var y = Ver(b); for (int i = 0; i < 3; i++) if (x[i] != y[i]) return x[i] > y[i]; return false; }
+
+        // a newer signed update for this launcher, or null (none, offline, or anything that doesn't check out)
+        public static Update Check(string repo, string version)
+        {
+            try
+            {
+                string b = "https://github.com/" + repo + "/releases/latest/download/";
+                byte[] man = Get(b + "update-manifest.txt"); byte[] sig = Convert.FromBase64String(Encoding.ASCII.GetString(Get(b + "update-manifest.sig")).Trim());
+                if (!Verify(man, sig)) return null;
+                var u = new Update(); var head = new Dictionary<string, string>();
+                foreach (var line in Encoding.UTF8.GetString(man).Split('\n'))
+                {
+                    if (line.Contains("=") && !line.Contains(" ")) { int i = line.IndexOf('='); head[line.Substring(0, i)] = line.Substring(i + 1); continue; }
+                    var p = line.Split(new[] { ' ' }, 4);
+                    if (p.Length == 4 && p[0] == "windows") u.Files.Add(new[] { p[1], p[2], p[3] });
+                }
+                string r, v, t;
+                if (!head.TryGetValue("repo", out r) || r != repo || !head.TryGetValue("version", out v) || !Newer(v, version) || u.Files.Count == 0) return null;
+                u.Version = v; u.Tag = head.TryGetValue("tag", out t) ? t : "v" + v;
+                return u;
+            }
+            catch { return null; }
+        }
+
+        // download + verify every file into <dir>\launcher-src, then rebuild <exe> from it; true when the new launcher is in place
+        public static bool Apply(string repo, Update u, string dir, string exe)
+        {
+            string src = Path.Combine(dir, "launcher-src");
+            var got = new List<KeyValuePair<string, byte[]>>();
+            try
+            {
+                foreach (var f in u.Files)
+                {
+                    byte[] d = Get("https://raw.githubusercontent.com/" + repo + "/" + u.Tag + "/" + f[2]);
+                    string sha; using (var h = System.Security.Cryptography.SHA256.Create()) sha = BitConverter.ToString(h.ComputeHash(d)).Replace("-", "").ToLowerInvariant();
+                    if (d.Length != long.Parse(f[1]) || sha != f[0]) return false;
+                    got.Add(new KeyValuePair<string, byte[]>(Path.GetFileName(f[2]), d));
+                }
+                Directory.CreateDirectory(src);
+                foreach (var old in Directory.GetFiles(src, "*.cs")) File.Delete(old);
+                foreach (var kv in got) File.WriteAllBytes(Path.Combine(src, kv.Key), kv.Value);
+                string bak = exe + ".old";
+                if (File.Exists(bak)) File.Delete(bak);
+                File.Move(exe, bak);                       // a running exe can be renamed, not overwritten
+                var cp = new System.CodeDom.Compiler.CompilerParameters { GenerateExecutable = true, OutputAssembly = exe, CompilerOptions = "/target:winexe /optimize" };
+                cp.ReferencedAssemblies.AddRange(new[] { "System.dll", "System.Drawing.dll", "System.Windows.Forms.dll" });
+                var sources = new List<string>(); foreach (var kv in got) sources.Add(Encoding.UTF8.GetString(kv.Value));
+                var res = new Microsoft.CSharp.CSharpCodeProvider().CompileAssemblyFromSource(cp, sources.ToArray());
+                if (res.Errors.HasErrors || !File.Exists(exe))
+                {
+                    var log = new List<string>(); foreach (System.CodeDom.Compiler.CompilerError e in res.Errors) log.Add(e.ToString());
+                    File.WriteAllLines(Path.Combine(dir, "launcher-build.log"), log.ToArray());
+                    if (File.Exists(exe)) File.Delete(exe);
+                    File.Move(bak, exe); return false;
+                }
+                return true;
+            }
+            catch (Exception e)
+            {
+                try { File.WriteAllText(Path.Combine(dir, "launcher-build.log"), "update: " + e.Message); if (!File.Exists(exe) && File.Exists(exe + ".old")) File.Move(exe + ".old", exe); } catch { }
+                return false;
+            }
+        }
+
+        public static void Cleanup(string exe) { try { if (File.Exists(exe + ".old")) File.Delete(exe + ".old"); } catch { } }
+    }
 }

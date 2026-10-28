@@ -17,6 +17,8 @@ ART = os.path.join(HERE, "art")
 CONF = retro.read_conf(os.path.join(DEST, "swg-installer.conf"))
 PLANETS = ["tatooine", "naboo", "corellia", "dantooine", "dathomir", "endor", "lok", "rori", "talus"]
 W, H = 640, 420                       # window size in original pixels
+VERSION = "1.3.0"                     # this launcher's release; signed updates come from UPDATES (GitHub releases)
+UPDATES = CONF.get("UPDATES", "hsmasteryoda/star-wars-galaxies-launcher")
 
 
 def extract():
@@ -156,7 +158,8 @@ class Launcher:
         self.disp = self.text(330, 396, "", 8, "#9ab", anchor="n"); self.show_display()
         c.bind("<ButtonPress-1>", self._press); c.bind("<B1-Motion>", self._move)
         root.bind("<Escape>", lambda e: root.destroy())
-        self.n = 0; self.cycle(); self.scroll(); self.refresh()
+        self.upd = self.text(W - 22, 265, "v" + VERSION, 8, "#5d7a90", anchor="e")
+        self.n = 0; self.cycle(); self.scroll(); self.refresh(); self.root.after(800, self.update)
         root.mainloop()
 
     def img(self, name):
@@ -212,6 +215,20 @@ class Launcher:
                 self.c.itemconfig(self.status, text="status unknown (the login server may still work)", fill="#cde")
             self.root.after(30000, self.refresh)
         retro.background(galaxy, done, self.root)
+
+    def update(self):
+        """Signed launcher update from the GitHub releases: checked on every start, installed, then restart."""
+        if not os.access(HERE, os.W_OK):
+            return
+        def found(u):
+            if not isinstance(u, tuple):              # no update, or no internet
+                return
+            self.c.itemconfig(self.upd, text="updating launcher to v%s..." % u[0], fill=self.GOLD)
+            retro.background(lambda: retro.apply_update(UPDATES, u, HERE), lambda ok: (
+                self.c.itemconfig(self.upd, text="launcher updated - restarting" if ok else "update failed - try next time",
+                                  fill=self.GOLD if ok is True else "#e08f8f"),
+                self.root.after(900, retro.restart) if ok is True else None), self.root)
+        retro.background(lambda: retro.check_update(UPDATES, VERSION), found, self.root)
 
     def run(self, *args):
         retro.detach([os.path.join(DEST, "swg.sh")] + list(args), cwd=GAME)

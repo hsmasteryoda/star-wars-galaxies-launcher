@@ -667,3 +667,89 @@ def display_dialog(root, theme, current, save, modes=("fullscreen", "windowed"))
                                root.winfo_rooty() + (root.winfo_height() - d.winfo_height()) // 2))
     d.lift(); d.focus_force(); d.grab_set()
     return d
+
+
+# ---------------------------------------------------------------- signed self-updates (from the public GitHub releases)
+# A release carries update-manifest.txt + update-manifest.sig (RSA-3072, SHA-256, made with a key that never leaves the
+# maintainer's PC). Manifest: "version=X.Y.Z", "repo=owner/name", "tag=vX.Y.Z", then "<platform> <sha256> <size> <path>".
+# The launcher only installs a manifest whose signature checks out, whose version is newer than its own, and whose
+# every file matches its SHA-256; otherwise nothing changes.
+UPDATE_KEY_N = int("F5B5F0EFE3BA17D9B31FD04E1304E01F2F16C36BFD2195001F6B0A4F7D2CA396B7C404385149309A52E884550D7B88272B993D4F5DA9C5BBE5D91EAD1A9BD4601F4B0925CECF7B112C1BFADD8C5F21982C3352DBFA0E641BC783A374F2DA1BB33B6ADEEF54932B1914F00F479005BF19E71AEDA53BA0A73D0C92F10F9A4CFAE1C6019167283CD5BF8030A181E17A9AD4D24CB1D1D30D6AEFE2B40AD7A3237351EB585334E8915FA5D0D865CC932520611D9DC402D188D84D71CC71D95FBE09CE614792DC05D695F43BBBD54FC3D7CF1D3A39E600331E8AAD6CF36DD6400F0AF3576C3C4F693836C5AD7CF31AC349CF6627B1C02AC7E35803D86C0072EE65B8AACEEE94DD77B31F8D44808912B4F1FFB4772C6D1744FFD6D04BDA66BF4EE44489CE5BEA7D9FBECA2FB0DFDFDCE0A7FE2EDF9327959AABF51D3035B52B64C53D6CC9C290E6B3DF3FCFCEAEA8F20C19303CD25232BEB41DF1A1FEEABA8EA1A48D908CD60F6706C61C51712FF2CED45832D485D27D0540B9AE1F6A405C9E0A5041F1", 16)
+UPDATE_KEY_E = 65537
+
+
+def rsa_verify(data, sig, n=UPDATE_KEY_N, e=UPDATE_KEY_E):
+    """RSASSA-PKCS1-v1_5 with SHA-256."""
+    import hashlib, hmac
+    k = (n.bit_length() + 7) // 8
+    if len(sig) != k:
+        return False
+    m = pow(int.from_bytes(sig, "big"), e, n).to_bytes(k, "big")
+    info = bytes.fromhex("3031300d060960864801650304020105000420") + hashlib.sha256(data).digest()
+    return hmac.compare_digest(m, b"\x00\x01" + b"\xff" * (k - 3 - len(info)) + b"\x00" + info)
+
+
+def _ver(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
+
+
+def _get(url, timeout=15):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "retro-launcher"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def check_update(repo, version, platform="linux"):
+    """-> (new version, [(sha256, size, path)], tag) when a newer signed update exists, else None. Network errors -> None."""
+    base = "https://github.com/%s/releases/latest/download/" % repo
+    try:
+        man, sig = _get(base + "update-manifest.txt"), _get(base + "update-manifest.sig")
+    except Exception:
+        return None
+    import base64
+    try:
+        sig = base64.b64decode(sig.strip())
+    except Exception:
+        return None
+    if not rsa_verify(man, sig):
+        return None
+    head, files = {}, []
+    for line in man.decode("utf-8").splitlines():
+        if "=" in line and " " not in line:
+            k, v = line.split("=", 1); head[k] = v
+        else:
+            p = line.split(" ", 3)
+            if len(p) == 4 and p[0] == platform:
+                files.append((p[1], int(p[2]), p[3]))
+    if head.get("repo") != repo or not files or _ver(head.get("version", "0")) <= _ver(version):
+        return None
+    return head["version"], files, head.get("tag", "v" + head["version"])
+
+
+def apply_update(repo, update, dest, progress=None):
+    """Download every file of <update>, check each SHA-256, then put them all in place under <dest> (the launcher folder,
+    repo paths "launcher/x.py" -> <dest>/x.py). All or nothing. -> True when installed."""
+    import hashlib
+    version, files, tag = update
+    got = []
+    for i, (sha, size, path) in enumerate(files, 1):
+        if progress:
+            progress("downloading %s (%d/%d)" % (path.split("/")[-1], i, len(files)))
+        try:
+            data = _get("https://raw.githubusercontent.com/%s/%s/%s" % (repo, tag, path))
+        except Exception:
+            return False
+        if len(data) != size or hashlib.sha256(data).hexdigest() != sha:
+            return False
+        got.append((os.path.join(dest, path.split("/")[-1]), data))
+    for target, data in got:                       # everything verified: write next to the old file, then swap it in
+        with open(target + ".new", "wb") as f:
+            f.write(data)
+    for target, data in got:
+        os.replace(target + ".new", target)
+    return True
+
+
+def restart():
+    os.execv(sys.executable, [sys.executable] + sys.argv)

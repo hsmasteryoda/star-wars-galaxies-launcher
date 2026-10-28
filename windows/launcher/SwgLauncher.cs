@@ -22,6 +22,9 @@ namespace Retro
         static Dictionary<string, string> Conf = Art.ReadConf(Path.Combine(Dir, "launcher.conf"));
         static readonly string[] Planets = { "tatooine", "naboo", "corellia", "dantooine", "dathomir", "endor", "lok", "rori", "talus" };
         const int W = 640, H = 420;
+        const string Version = "1.3.0";        // this launcher's release; signed updates come from UPDATES= (GitHub releases)
+        static string Repo = Art.Get(Conf, "UPDATES", "hsmasteryoda/star-wars-galaxies-launcher");
+        string updText = "v" + Version; Color updColor = Color.FromArgb(93, 122, 144);
 
         public static void Extract()
         {
@@ -84,6 +87,7 @@ namespace Retro
             cyc.Tick += (s, e) => { planet++; f.Invalidate(); }; cyc.Start();
             var poll = new System.Windows.Forms.Timer { Interval = 30000 };
             poll.Tick += (s, e) => Refresh(); poll.Start(); Refresh();
+            SelfUpdate();
             Application.Run(f);
         }
 
@@ -108,6 +112,8 @@ namespace Retro
             using (var p = new Pen(Blue)) g.DrawRectangle(p, panel);
             using (var p = new Pen(Color.FromArgb(31, 60, 85))) g.DrawLine(p, 10, 278, W - 10, 278);
             using (var bold = new Font("Segoe UI", 9f, FontStyle.Bold)) using (var b = new SolidBrush(Blue)) g.DrawString("GALAXY", bold, b, 20, 258);
+            using (var fnt = new Font("Segoe UI", 7.5f)) using (var b = new SolidBrush(updColor))
+                g.DrawString(updText, fnt, b, W - 18, 260, new StringFormat { Alignment = StringAlignment.Far });
             using (var fnt = new Font("Segoe UI", 10f)) using (var b = new SolidBrush(statusColor)) g.DrawString(status, fnt, b, 84, 257);
             using (var fnt = new Font("Segoe UI", 8.5f)) using (var b = new SolidBrush(Color.FromArgb(154, 170, 187)))
                 g.DrawString("New player? Type any new name and password at the login screen - your account is made on the spot.\n" +
@@ -205,6 +211,24 @@ namespace Retro
             int w, h; string m; ReadDisplay(out w, out h, out m);
             Display.Show(f, PanelC, Color.FromArgb(204, 221, 238), Gold, Color.FromArgb(19, 40, 58), "Segoe UI", w, h, m,
                          new[] { "borderless", "fullscreen", "windowed" }, (nw, nh, nm) => { WriteDisplay(nw, nh, nm); f.Invalidate(); });
+        }
+
+        // signed launcher update from the GitHub releases: checked on every start, rebuilt on this PC, then restarted
+        void SelfUpdate()
+        {
+            string exe = Application.ExecutablePath; Updater.Cleanup(exe);
+            new Thread(() =>
+            {
+                var u = Updater.Check(Repo, Version); if (u == null) return;
+                f.BeginInvoke((Action)(() => { updText = "updating launcher to v" + u.Version + "..."; updColor = Gold; f.Invalidate(); }));
+                bool ok = Updater.Apply(Repo, u, Dir, exe);
+                f.BeginInvoke((Action)(() =>
+                {
+                    updText = ok ? "launcher updated - restarting" : "update failed - try next time"; updColor = ok ? Gold : Color.FromArgb(224, 143, 143);
+                    f.Invalidate();
+                    if (ok) { var t = new System.Windows.Forms.Timer { Interval = 900 }; t.Tick += (s, e) => { t.Stop(); Art.Start(exe, "", Dir); f.Close(); }; t.Start(); }
+                }));
+            }) { IsBackground = true }.Start();
         }
 
         void Play()
